@@ -1,11 +1,10 @@
 const pool = require("../config/db");
+const pdfParse = require("pdf-parse");
 const { analyzeWithAI } = require("../services/ai.service");
 const { HfInference } = require("@huggingface/inference");
-const pdfParse = require("pdf-parse");
 
 const hf = new HfInference(process.env.HF_API_KEY);
 
-/* ---------- Utility: cosine similarity ---------- */
 function cosineSimilarity(vecA, vecB) {
   const dot = vecA.reduce((sum, val, i) => sum + val * vecB[i], 0);
   const magA = Math.sqrt(vecA.reduce((sum, val) => sum + val * val, 0));
@@ -15,66 +14,55 @@ function cosineSimilarity(vecA, vecB) {
 
 /**
  * POST /api/resumes
- * Upload PDF + Analyze
  */
 exports.createResume = async (req, res) => {
-  const { name, email, experience, jobDescription } = req.body;
-
-  // NOTE: skills is optional now (because PDF will contain it)
-  const skills = req.body.skills || "";
-
-  if (!name || !email || experience === undefined) {
-    return res.status(400).json({
-      error: "Name, email and experience are required",
-    });
-  }
-
   try {
-    /* ---------- 1) Extract resume text ---------- */
-    let resumeText = "";
+    const { name, email, experience, jobDescription } = req.body;
 
-    // ✅ If PDF uploaded
-    if (req.file) {
-      const pdfData = await pdfParse(req.file.buffer);
-      resumeText = pdfData.text;
-    } else {
-      // fallback: manual text mode
-      resumeText = `
-        Name: ${name}
-        Skills: ${skills}
-        Experience: ${experience} years
-      `;
-    }
-
-    // safety check
-    if (!resumeText || resumeText.trim().length < 30) {
+    if (!name || !email || experience === undefined) {
       return res.status(400).json({
-        error: "Resume text is too small. Please upload a valid PDF.",
+        error: "Name, email and experience are required",
       });
     }
 
-    /* ---------- 2) AI Sentiment Analysis ---------- */
+    // ✅ PDF required
+    if (!req.file) {
+      return res.status(400).json({
+        error: "Resume PDF file is required",
+      });
+    }
+
+    // ✅ Extract PDF text
+    const pdfData = await pdfParse(req.file.buffer);
+    const resumeText = pdfData.text;
+
+    if (!resumeText || resumeText.trim().length < 30) {
+      return res.status(400).json({
+        error: "Could not extract text from PDF",
+      });
+    }
+
+    // ✅ AI Sentiment
     const aiResult = await analyzeWithAI(resumeText);
 
-    /* ---------- 3) Score calculation ---------- */
+    // ✅ Score
     let score = 50;
     if (Array.isArray(aiResult) && aiResult[0]?.score) {
       score = Math.round(aiResult[0].score * 100);
     }
     score = Math.min(score, 100);
 
-    /* ---------- 4) Job matching (optional) ---------- */
+    // ✅ Job matching
     let jobMatch = null;
-
     if (jobDescription && jobDescription.trim().length > 0) {
       const resumeEmbedding = await hf.featureExtraction({
         model: "sentence-transformers/all-MiniLM-L6-v2",
-        inputs: resumeText.substring(0, 2000), // ✅ limit length (important)
+        inputs: resumeText,
       });
 
       const jobEmbedding = await hf.featureExtraction({
         model: "sentence-transformers/all-MiniLM-L6-v2",
-        inputs: jobDescription.substring(0, 2000),
+        inputs: jobDescription,
       });
 
       const similarity = cosineSimilarity(resumeEmbedding, jobEmbedding);
@@ -84,55 +72,37 @@ exports.createResume = async (req, res) => {
       };
     }
 
-    /* ---------- 5) Feedback ---------- */
+    // ✅ Feedback
     const feedback = [];
 
-    if (score >= 80) {
-      feedback.push("Strong overall resume quality.");
-    } else if (score >= 60) {
-      feedback.push("Good resume, but there is room for improvement.");
-    } else {
-      feedback.push("Resume needs improvement in clarity and structure.");
-    }
+    if (score >= 80) feedback.push("Strong overall resume quality.");
+    else if (score >= 60) feedback.push("Good resume, but can be improved.");
+    else feedback.push("Resume needs improvement in structure and clarity.");
 
-    // skills feedback (if manual input used)
-    if (skills && skills.split(",").length < 3) {
-      feedback.push("Consider adding more relevant technical skills.");
-    }
-
-    if (Number(experience) < 2) {
-      feedback.push("Consider adding more project or internship experience.");
-    }
+    if (experience < 2)
+      feedback.push("Consider adding more projects or internship experience.");
 
     if (jobMatch) {
-      if (jobMatch.matchScore >= 75) {
-        feedback.push("Resume aligns well with the job description.");
-      } else {
-        feedback.push("Try tailoring your resume more closely to the job description.");
-      }
+      if (jobMatch.matchScore >= 75)
+        feedback.push("Resume matches well with the job description.");
+      else feedback.push("Tailor your resume more closely to the job role.");
     }
 
-    /* ---------- 6) SAVE TO DB ---------- */
-    // ✅ IMPORTANT: You should add a column resume_text in DB
-    // If you don’t have it yet, remove resume_text from query.
-
+    // ✅ Save to DB
     const result = await pool.query(
-      `INSERT INTO resumes 
-        (name, email, skills, experience, score, ai_result, resume_text)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO resumes (name, email, skills, experience, score, ai_result)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
       [
         name,
         email,
-        skills,
-        experience,
+        resumeText.substring(0, 500), // store first 500 chars as "skills"
+        Number(experience),
         score,
         JSON.stringify(aiResult),
-        resumeText,
       ]
     );
 
-    /* ---------- 7) RESPONSE ---------- */
     res.status(201).json({
       message: "Resume analyzed successfully",
       data: result.rows[0],
@@ -141,7 +111,7 @@ exports.createResume = async (req, res) => {
       feedback,
     });
   } catch (error) {
-    console.error("AI / PDF / DB error:", error);
+    console.error("PDF/AI error:", error);
     res.status(500).json({ error: "AI analysis failed" });
   }
 };
