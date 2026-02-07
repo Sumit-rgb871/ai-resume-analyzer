@@ -1,17 +1,19 @@
 import { useState } from "react";
 
-// ✅ Backend base URL (Render in production, localhost in dev)
+// ✅ Backend URL (Render)
 const API_BASE_URL =
-  process.env.REACT_APP_BACKEND_URL || "http://localhost:8000";
+  process.env.REACT_APP_BACKEND_URL ||
+  "https://ai-resume-analyzer-backend-5xg8.onrender.com";
 
 function ResumeForm({ onResumeAdded }) {
   const [formData, setFormData] = useState({
     name: "",
     email: "",
-    skills: "",
     experience: "",
     jobDescription: "",
   });
+
+  const [resumeFile, setResumeFile] = useState(null);
 
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -23,19 +25,31 @@ function ResumeForm({ onResumeAdded }) {
     }));
   };
 
+  const handleFileChange = (e) => {
+    setResumeFile(e.target.files[0]);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setResult(null);
 
     try {
+      // ✅ MUST use FormData for PDF upload
+      const payload = new FormData();
+      payload.append("name", formData.name);
+      payload.append("email", formData.email);
+      payload.append("experience", formData.experience);
+      payload.append("jobDescription", formData.jobDescription);
+
+      // ✅ PDF must be attached with same key as multer: upload.single("resume")
+      if (resumeFile) {
+        payload.append("resume", resumeFile);
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/resumes`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formData,
-          experience: Number(formData.experience),
-        }),
+        body: payload, // ❌ no JSON.stringify
       });
 
       const data = await response.json();
@@ -48,13 +62,14 @@ function ResumeForm({ onResumeAdded }) {
 
       if (onResumeAdded) onResumeAdded();
 
+      // reset
       setFormData({
         name: "",
         email: "",
-        skills: "",
         experience: "",
         jobDescription: "",
       });
+      setResumeFile(null);
     } catch (error) {
       setResult({ error: error.message });
     } finally {
@@ -68,7 +83,7 @@ function ResumeForm({ onResumeAdded }) {
       <div style={styles.card}>
         <h1 style={styles.title}>AI Resume Analyzer</h1>
         <p style={styles.subtitle}>
-          Analyze resume quality, job match & AI feedback
+          Upload resume PDF + get score, feedback & job match
         </p>
 
         <form onSubmit={handleSubmit} style={styles.form}>
@@ -90,15 +105,6 @@ function ResumeForm({ onResumeAdded }) {
             required
           />
 
-          <textarea
-            style={styles.textarea}
-            name="skills"
-            placeholder="Skills (e.g. React, Node, SQL)"
-            value={formData.skills}
-            onChange={handleChange}
-            required
-          />
-
           <input
             style={styles.input}
             type="number"
@@ -106,6 +112,15 @@ function ResumeForm({ onResumeAdded }) {
             placeholder="Experience (years)"
             value={formData.experience}
             onChange={handleChange}
+            required
+          />
+
+          {/* ✅ PDF Upload */}
+          <input
+            style={styles.input}
+            type="file"
+            accept=".pdf"
+            onChange={handleFileChange}
             required
           />
 
@@ -135,9 +150,6 @@ function ResumeForm({ onResumeAdded }) {
             <strong>Email:</strong> {result.data?.email}
           </p>
           <p>
-            <strong>Skills:</strong> {result.data?.skills}
-          </p>
-          <p>
             <strong>Experience:</strong> {result.data?.experience} years
           </p>
 
@@ -151,6 +163,7 @@ function ResumeForm({ onResumeAdded }) {
               }}
             />
           </div>
+
           <p
             style={{
               color:
@@ -196,7 +209,7 @@ function ResumeForm({ onResumeAdded }) {
             </>
           )}
 
-          {/* AI FEEDBACK */}
+          {/* FEEDBACK */}
           {Array.isArray(result.feedback) && result.feedback.length > 0 && (
             <>
               <h3 style={{ marginTop: "20px" }}>
