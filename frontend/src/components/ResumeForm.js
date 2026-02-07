@@ -1,5 +1,9 @@
 import { useState } from "react";
 
+// ✅ Backend base URL (Render in production, localhost in dev)
+const API_BASE_URL =
+  process.env.REACT_APP_BACKEND_URL || "http://localhost:8000";
+
 function ResumeForm({ onResumeAdded }) {
   const [formData, setFormData] = useState({
     name: "",
@@ -25,7 +29,7 @@ function ResumeForm({ onResumeAdded }) {
     setResult(null);
 
     try {
-      const response = await fetch("http://localhost:8000/api/resumes", {
+      const response = await fetch(`${API_BASE_URL}/api/resumes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -35,11 +39,13 @@ function ResumeForm({ onResumeAdded }) {
       });
 
       const data = await response.json();
+
       if (!response.ok) {
         throw new Error(data.error || "Failed to submit resume");
       }
 
       setResult(data);
+
       if (onResumeAdded) onResumeAdded();
 
       setFormData({
@@ -122,10 +128,18 @@ function ResumeForm({ onResumeAdded }) {
         <div style={{ ...styles.card, marginTop: "30px" }}>
           <h2>Analysis Result</h2>
 
-          <p><strong>Name:</strong> {result.data?.name}</p>
-          <p><strong>Email:</strong> {result.data?.email}</p>
-          <p><strong>Skills:</strong> {result.data?.skills}</p>
-          <p><strong>Experience:</strong> {result.data?.experience} years</p>
+          <p>
+            <strong>Name:</strong> {result.data?.name}
+          </p>
+          <p>
+            <strong>Email:</strong> {result.data?.email}
+          </p>
+          <p>
+            <strong>Skills:</strong> {result.data?.skills}
+          </p>
+          <p>
+            <strong>Experience:</strong> {result.data?.experience} years
+          </p>
 
           {/* Resume Score */}
           <h3 style={{ marginTop: "20px" }}>Resume Score</h3>
@@ -137,18 +151,19 @@ function ResumeForm({ onResumeAdded }) {
               }}
             />
           </div>
-          <p style={{
-            color:
-            result.data?.score >= 75
-            ? "green"
-            : result.data?.score >= 50
-            ? "orange"
-            : "red",
-            fontWeight: "bold"
-          }}>
-          {result.data?.score}%
+          <p
+            style={{
+              color:
+                result.data?.score >= 75
+                  ? "green"
+                  : result.data?.score >= 50
+                  ? "orange"
+                  : "red",
+              fontWeight: "bold",
+            }}
+          >
+            {result.data?.score}%
           </p>
-
 
           {/* AI INSIGHTS */}
           <h3 style={{ marginTop: "20px" }}>AI Insights</h3>
@@ -198,9 +213,7 @@ function ResumeForm({ onResumeAdded }) {
       )}
 
       {result?.error && (
-        <p style={{ color: "red", marginTop: "20px" }}>
-          {result.error}
-        </p>
+        <p style={{ color: "red", marginTop: "20px" }}>{result.error}</p>
       )}
     </div>
   );
